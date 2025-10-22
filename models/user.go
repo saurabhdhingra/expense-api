@@ -7,7 +7,7 @@ type User struct {
 	gorm.Model
 	Name     string `json:"name" binding:"required"`
 	Email    string `gorm:"uniqueIndex" json:"email" binding:"required,email"`
-	Password string `json:"-"` // Hashed password, excluded from JSON output
+	Password string `json:"password"` // Hashed password, excluded from JSON output
 	Expenses []Expense // One-to-many relationship
 }
 
