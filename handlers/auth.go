@@ -1,11 +1,11 @@
 package handlers
 
 import (
-	"net/http"
-	"log"
 	"expense-api/config"
 	"expense-api/models"
 	"expense-api/utils"
+	"log"
+	"net/http"
 
 	"github.com/gin-gonic/gin"
 	"golang.org/x/crypto/bcrypt"
@@ -34,7 +34,6 @@ func RegisterUser(c *gin.Context) {
 	}
 	user.Password = string(hashedPassword)
 
-
 	// 3. Save User
 	if err := config.DB.Create(&user).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not create user"})
@@ -62,14 +61,14 @@ func LoginUser(c *gin.Context) {
 	// 1. Find User by Email
 	var user models.User
 	if err := config.DB.Where("email = ?", loginRequest.Email).First(&user).Error; err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"message": "User not found with email: " + loginRequest.Email,})
+		c.JSON(http.StatusUnauthorized, gin.H{"message": "User not found with email: " + loginRequest.Email})
 		return
 	}
 	log.Printf("User retrieved: ID=%d, Hashed Password=%s", user.ID, user.Password)
 	log.Printf("Password from login request: %s", loginRequest.Password)
 
 	// 2. Verify Password
-	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(user.Password)); err != nil {
+	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(loginRequest.Password)); err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"message": "Password Incorrect, err : " + err.Error()})
 		return
 	}
@@ -80,13 +79,30 @@ func LoginUser(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate token"})
 		return
 	}
-	
+
 	c.JSON(http.StatusOK, gin.H{"token": token})
+}
+
+// GetProfile handles GET /me
+func GetProfile(c *gin.Context) {
+	userID := ExtractUserID(c)
+	var user models.User
+
+	if err := config.DB.First(&user, userID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
+		return
+	}
+
+	c.JSON(http.StatusOK, models.PublicUser{
+		ID:    user.ID,
+		Name:  user.Name,
+		Email: user.Email,
+	})
 }
 
 func ExtractUserID(c *gin.Context) uint {
 	if userID, exists := c.Get("user_id"); exists {
 		return userID.(uint)
 	}
-	return 0 
+	return 0
 }

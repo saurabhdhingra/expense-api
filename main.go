@@ -21,17 +21,23 @@ func main() {
 
 	authenticated := r.Group("/")
 	authenticated.Use(middleware.AuthMiddleware())
-	{	
+	{
+		authenticated.GET("/me", handlers.GetProfile)
 		authenticated.POST("/expenses", handlers.CreateExpense)
 		authenticated.PUT("/expenses/:id", handlers.UpdateExpense)
 		authenticated.DELETE("/expense/:id", handlers.DeleteExpense)
 
 		authenticated.GET("/expenses", handlers.ListExpenses)
 
-		authenticated.GET("/analytics", handlers.GetAnalytics)
+		authenticated.POST("/wallets", handlers.CreateWallet)
+		authenticated.GET("/wallets", handlers.ListWallets)
+		authenticated.PUT("/wallets/:id", handlers.UpdateWallet)
+		authenticated.DELETE("/wallets/:id", handlers.DeleteWallet)
+
+		authenticated.POST("/analytics", handlers.GetAnalytics)
 	}
 
-	r.GET("/health", func(c *gin.Context){
+	r.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "UP", "message": "Expense Tracker API is running"})
 	})
 

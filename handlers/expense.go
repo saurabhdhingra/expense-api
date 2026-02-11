@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"sort"
 	"strconv"
@@ -17,11 +18,12 @@ import (
 // Helper function to convert GORM model to DTO
 func ToExpenseDTO(e models.Expense) models.ExpenseDTO {
 	return models.ExpenseDTO{
-		ID: e.ID,
+		ID:          fmt.Sprintf("%d", e.ID),
 		Description: e.Description,
-		Amount: e.Amount,
-		Category: e.Category,
-		Date: e.Date,
+		Amount:      e.Amount,
+		Category:    e.Category,
+		Date:        e.Date,
+		WalletID:    fmt.Sprintf("%d", e.WalletID),
 	}
 }
 
@@ -32,7 +34,7 @@ func CreateExpense(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body", "details": err.Error()})
 		return
 	}
-	
+
 	// Validate Category
 	if !models.ValidCategories[expense.Category] {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid category", "valid_categories": models.ValidCategories})
@@ -40,7 +42,20 @@ func CreateExpense(c *gin.Context) {
 	}
 
 	// Set the UserID from the authenticated user
-	expense.UserID = ExtractUserID(c)
+	userID := ExtractUserID(c)
+	expense.UserID = userID
+
+	// Validate WalletID and ownership
+	if expense.WalletID != 0 {
+		var wallet models.Wallet
+		if err := config.DB.Where("id = ? AND user_id = ?", expense.WalletID, userID).First(&wallet).Error; err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid wallet_id or you do not own this wallet"})
+			return
+		}
+		// Update balance
+		wallet.Balance -= expense.Amount
+		config.DB.Save(&wallet)
+	}
 
 	if err := config.DB.Create(&expense).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not create expense"})
@@ -65,7 +80,7 @@ func UpdateExpense(c *gin.Context) {
 	// Check ownership and existence
 	if err := config.DB.Where("id = ? AND user_id = ?", expenseID, userID).First(&expense).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			c.JSON(http.StatusForbidden, gin.H{"message": "Forbidden or Not Found"}) 
+			c.JSON(http.StatusForbidden, gin.H{"message": "Forbidden or Not Found"})
 			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
@@ -104,14 +119,14 @@ func DeleteExpense(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid Expense ID"})
 		return
 	}
-	
+
 	userID := ExtractUserID(c)
-	
+
 	var expense models.Expense
 	// Check ownership and existence
 	if err := config.DB.Where("id = ? AND user_id = ?", expenseID, userID).First(&expense).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			c.JSON(http.StatusForbidden, gin.H{"message": "Forbidden or Not Found"}) 
+			c.JSON(http.StatusForbidden, gin.H{"message": "Forbidden or Not Found"})
 			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
@@ -190,6 +205,55 @@ func ListExpenses(c *gin.Context) {
 		return
 	}
 
+	if filter == "all" {
+		monthlyMap := make(map[string][]models.ExpenseDTO)
+		distributionMap := make(map[string]float64)
+		currentMonth := now.Format("January 2006")
+
+		for _, exp := range expenses {
+			month := exp.Date.Format("January 2006")
+			dto := ToExpenseDTO(exp)
+			monthlyMap[month] = append(monthlyMap[month], dto)
+
+			if month == currentMonth {
+				distributionMap[exp.Category] += exp.Amount
+			}
+		}
+
+		// Convert monthlyMap to sorted slice
+		var monthlyGroups []models.MonthlyExpenseGroup
+		var months []string
+		for m := range monthlyMap {
+			months = append(months, m)
+		}
+		sort.Slice(months, func(i, j int) bool {
+			t1, _ := time.Parse("January 2006", months[i])
+			t2, _ := time.Parse("January 2006", months[j])
+			return t1.After(t2)
+		})
+
+		for _, m := range months {
+			monthlyGroups = append(monthlyGroups, models.MonthlyExpenseGroup{
+				Month:    m,
+				Expenses: monthlyMap[m],
+			})
+		}
+
+		var currentMonthDistribution []models.CategoryDistribution
+		for cat, total := range distributionMap {
+			currentMonthDistribution = append(currentMonthDistribution, models.CategoryDistribution{
+				Category:    cat,
+				TotalAmount: total,
+			})
+		}
+
+		c.JSON(http.StatusOK, models.ExpenseResponseData{
+			MonthlyExpenses:          monthlyGroups,
+			CurrentMonthDistribution: currentMonthDistribution,
+		})
+		return
+	}
+
 	var responseData []models.ExpenseDTO
 	for _, exp := range expenses {
 		responseData = append(responseData, ToExpenseDTO(exp))
@@ -198,104 +262,88 @@ func ListExpenses(c *gin.Context) {
 	c.JSON(http.StatusOK, responseData)
 }
 
-// GetAnalytics handles GET /analytics
+// GetAnalytics handles POST /analytics (intended for Insights)
 func GetAnalytics(c *gin.Context) {
 	userID := ExtractUserID(c)
+
+	var request struct {
+		Interval string `json:"interval"` // daily, monthly, yearly
+		WalletID string `json:"walletId"`
+		Category string `json:"category"`
+	}
+
+	if err := c.ShouldBindJSON(&request); err != nil {
+		// Fallback to defaults if not a POST or JSON body missing
+		request.Interval = "monthly"
+	}
+
+	var startDate time.Time
 	now := time.Now().UTC()
-	
-	// 1. Calculate time boundaries for the current period
-	// Start of Day
-	// startOfDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
-	// Start of Month
-	// startOfMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
-	// Start of Year
-	startOfYear := time.Date(now.Year(), 1, 1, 0, 0, 0, 0, time.UTC)
 
+	switch request.Interval {
+	case "daily":
+		startDate = now.AddDate(0, 0, -7)
+	case "monthly":
+		startDate = now.AddDate(-1, 0, 0)
+	case "yearly":
+		startDate = now.AddDate(-5, 0, 0)
+	default:
+		startDate = now.AddDate(0, -1, 0)
+	}
 
-	// 2. Fetch all expenses for the current year
-	var expensesInYear []models.Expense
-	if err := config.DB.Where("user_id = ? AND date >= ?", userID, startOfYear).Order("date desc").Find(&expensesInYear).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch data for analytics"})
+	query := config.DB.Where("user_id = ? AND date >= ?", userID, startDate)
+
+	if request.WalletID != "" {
+		wID, _ := strconv.ParseUint(request.WalletID, 10, 32)
+		query = query.Where("wallet_id = ?", uint(wID))
+	}
+	if request.Category != "" {
+		query = query.Where("category = ?", request.Category)
+	}
+
+	var expenses []models.Expense
+	if err := query.Order("amount desc").Find(&expenses).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch analytics"})
 		return
 	}
 
-	// 3. Process Data for Analytics
-	analytics := models.AnalyticsResponse{
-		Daily:   make([]models.AnalyticsItem, 0),
-		Monthly: make([]models.AnalyticsItem, 0),
-		Yearly:  make([]models.AnalyticsItem, 0),
+	// Calculate Top 5
+	var topTransactions []models.ExpenseDTO
+	topN := 5
+	if len(expenses) < topN {
+		topN = len(expenses)
+	}
+	for i := 0; i < topN; i++ {
+		topTransactions = append(topTransactions, ToExpenseDTO(expenses[i]))
 	}
 
-	// Grouping maps
-	dailyMap := make(map[string][]models.Expense)   // Key: YYYY-MM-DD
-	monthlyMap := make(map[string][]models.Expense) // Key: YYYY-MM
-	yearlyMap := make(map[string][]models.Expense)  // Key: YYYY
-
-	for _, exp := range expensesInYear {
-		// Daily grouping
-		dailyKey := exp.Date.Format("2006-01-02")
-		dailyMap[dailyKey] = append(dailyMap[dailyKey], exp)
-
-		// Monthly grouping
-		monthlyKey := exp.Date.Format("2006-01")
-		monthlyMap[monthlyKey] = append(monthlyMap[monthlyKey], exp)
-
-		// Yearly grouping
-		yearlyKey := exp.Date.Format("2006")
-		yearlyMap[yearlyKey] = append(yearlyMap[yearlyKey], exp)
-	}
-
-	// Helper to calculate total and top 5
-	processGroup := func(group map[string][]models.Expense, periodFormat string) []models.AnalyticsItem {
-		var items []models.AnalyticsItem
-		for key, expList := range group {
-			total := 0.0
-			var dtos []models.ExpenseDTO
-			
-			// 1. Calculate Total
-			for _, exp := range expList {
-				total += exp.Amount
-				dtos = append(dtos, ToExpenseDTO(exp))
-			}
-
-			// 2. Sort DTOs by Amount Descending (Top 5)
-			sort.Slice(dtos, func(i, j int) bool {
-				return dtos[i].Amount > dtos[j].Amount
-			})
-			
-			topN := 5
-			if len(dtos) < topN {
-				topN = len(dtos)
-			}
-
-			// Format period key (e.g., convert "2023-10" to "October 2023")
-			var periodDisplay string
-			if periodFormat == "2006-01-02" {
-				periodDisplay = key // YYYY-MM-DD
-			} else if periodFormat == "2006-01" {
-				t, _ := time.Parse("2006-01", key)
-				periodDisplay = t.Format("January 2006")
-			} else {
-				periodDisplay = key // YYYY
-			}
-
-			items = append(items, models.AnalyticsItem{
-				Period: periodDisplay,
-				TotalExpenses: total,
-				TopTransactions: dtos[:topN],
-			})
+	// Calculate Chart Data
+	chartMap := make(map[string]float64)
+	for _, exp := range expenses {
+		var label string
+		switch request.Interval {
+		case "daily":
+			label = exp.Date.Format("Mon")
+		case "monthly":
+			label = exp.Date.Format("Jan")
+		case "yearly":
+			label = exp.Date.Format("2006")
 		}
-		// Sort by period key for chronological order
-		sort.Slice(items, func(i, j int) bool {
-			return items[i].Period < items[j].Period
-		})
-		return items
+		chartMap[label] += exp.Amount
 	}
 
-	// Populate analytics response
-	analytics.Daily = processGroup(dailyMap, "2006-01-02")
-	analytics.Monthly = processGroup(monthlyMap, "2006-01")
-	analytics.Yearly = processGroup(yearlyMap, "2006")
+	var chartData []models.BarChartDataPoint
+	// For simplicity, we just iterate the map. Chronological order would be better.
+	for label, amount := range chartMap {
+		chartData = append(chartData, models.BarChartDataPoint{
+			ID:     label,
+			Label:  label,
+			Amount: amount,
+		})
+	}
 
-	c.JSON(http.StatusOK, analytics)
+	c.JSON(http.StatusOK, models.InsightsResponse{
+		ChartData:       chartData,
+		TopTransactions: topTransactions,
+	})
 }

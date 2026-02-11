@@ -19,7 +19,7 @@ func ConnectDatabase() {
 	}
 
 	log.Println("Running database migrations...")
-	err = db.AutoMigrate(&models.User{}, &models.Expense{})
+	err = db.AutoMigrate(&models.User{}, &models.Expense{}, &models.Wallet{})
 	if err != nil {
 		log.Fatalf("Failed to run migrations: %v", err)
 	}
