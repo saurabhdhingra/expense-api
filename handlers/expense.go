@@ -3,6 +3,7 @@ package handlers
 import (
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"sort"
 	"strconv"
@@ -29,26 +30,46 @@ func ToExpenseDTO(e models.Expense) models.ExpenseDTO {
 
 // CreateExpense handles POST /expenses
 func CreateExpense(c *gin.Context) {
-	var expense models.Expense
-	if err := c.ShouldBindJSON(&expense); err != nil {
+	var req models.ExpenseCreateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		log.Printf("CreateExpense Binding Error: %v", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body", "details": err.Error()})
 		return
 	}
 
+	log.Printf("CreateExpense Request: Description=%s, UseAmount=%f, Category=%s, WalletID=%s", req.Description, req.Amount, req.Category, req.WalletID)
+
 	// Validate Category
-	if !models.ValidCategories[expense.Category] {
+	if !models.ValidCategories[req.Category] {
+		log.Printf("CreateExpense Error: Invalid category %s", req.Category)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid category", "valid_categories": models.ValidCategories})
 		return
 	}
 
 	// Set the UserID from the authenticated user
 	userID := ExtractUserID(c)
-	expense.UserID = userID
+
+	expense := models.Expense{
+		Description: req.Description,
+		Amount:      req.Amount,
+		Category:    req.Category,
+		Date:        req.Date,
+		UserID:      userID,
+	}
 
 	// Validate WalletID and ownership
-	if expense.WalletID != 0 {
+	if req.WalletID != "" {
+		wID, err := strconv.ParseUint(req.WalletID, 10, 32)
+		if err != nil {
+			log.Printf("CreateExpense Error: Invalid WalletID format %s", req.WalletID)
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid wallet_id format"})
+			return
+		}
+		expense.WalletID = uint(wID)
+
 		var wallet models.Wallet
 		if err := config.DB.Where("id = ? AND user_id = ?", expense.WalletID, userID).First(&wallet).Error; err != nil {
+			log.Printf("CreateExpense Error: Wallet %d not found or not owned by user %d", expense.WalletID, userID)
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid wallet_id or you do not own this wallet"})
 			return
 		}
@@ -58,10 +79,12 @@ func CreateExpense(c *gin.Context) {
 	}
 
 	if err := config.DB.Create(&expense).Error; err != nil {
+		log.Printf("CreateExpense Error: Database failure: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not create expense"})
 		return
 	}
 
+	log.Printf("CreateExpense Success: ID=%d", expense.ID)
 	c.JSON(http.StatusCreated, ToExpenseDTO(expense))
 }
 
@@ -141,10 +164,11 @@ func DeleteExpense(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
-// ListExpenses handles GET /expenses?filter=past_week
+// ListExpenses handles GET /expenses?filter=past_week&wallet_id=1
 func ListExpenses(c *gin.Context) {
 	userID := ExtractUserID(c)
 	filter := c.DefaultQuery("filter", "all")
+	walletIDStr := c.Query("wallet_id")
 
 	// Custom date range parameters
 	startDateStr := c.Query("start_date")
@@ -195,6 +219,14 @@ func ListExpenses(c *gin.Context) {
 	var expenses []models.Expense
 	query := config.DB.Where("user_id = ?", userID).Order("date desc")
 
+	// Apply wallet_id filter if provided
+	if walletIDStr != "" {
+		wID, err := strconv.ParseUint(walletIDStr, 10, 32)
+		if err == nil {
+			query = query.Where("wallet_id = ?", uint(wID))
+		}
+	}
+
 	// Apply date range filter if not "all"
 	if filter != "all" {
 		query = query.Where("date >= ? AND date < ?", startDate, endDate)
@@ -202,6 +234,16 @@ func ListExpenses(c *gin.Context) {
 
 	if err := query.Find(&expenses).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not fetch expenses"})
+		return
+	}
+
+	// If wallet_id is provided, return flat array instead of grouped format
+	if walletIDStr != "" {
+		responseData := make([]models.ExpenseDTO, 0) // Initialize to empty slice, not nil
+		for _, exp := range expenses {
+			responseData = append(responseData, ToExpenseDTO(exp))
+		}
+		c.JSON(http.StatusOK, responseData)
 		return
 	}
 
@@ -268,7 +310,7 @@ func GetAnalytics(c *gin.Context) {
 
 	var request struct {
 		Interval string `json:"interval"` // daily, monthly, yearly
-		WalletID string `json:"walletId"`
+		WalletID string `json:"wallet_id"`
 		Category string `json:"category"`
 	}
 
@@ -307,8 +349,8 @@ func GetAnalytics(c *gin.Context) {
 		return
 	}
 
-	// Calculate Top 5
-	var topTransactions []models.ExpenseDTO
+	// Calculate Top 5 - initialize as empty slice to avoid null in JSON
+	topTransactions := make([]models.ExpenseDTO, 0)
 	topN := 5
 	if len(expenses) < topN {
 		topN = len(expenses)
@@ -332,7 +374,7 @@ func GetAnalytics(c *gin.Context) {
 		chartMap[label] += exp.Amount
 	}
 
-	var chartData []models.BarChartDataPoint
+	chartData := make([]models.BarChartDataPoint, 0) // Initialize as empty slice to avoid null in JSON
 	// For simplicity, we just iterate the map. Chronological order would be better.
 	for label, amount := range chartMap {
 		chartData = append(chartData, models.BarChartDataPoint{

@@ -12,13 +12,13 @@ type Wallet struct {
 	Currency string  `json:"currency" binding:"required"`
 	Balance  float64 `json:"balance"`
 	Type     string  `json:"type"` // Cash, Debit Card, Credit Card
-	CardNo   string  `json:"card_no"`
-	Expiry   string  `json:"expiry"`
-	Bank     string  `json:"bank"`
-	Company  string  `json:"company"` // Visa, Mastercard, etc.
-	Color    string  `json:"color"`
+	CardNo   *string `json:"card_no"`
+	Expiry   *string `json:"expiry"`
+	Bank     *string `json:"bank"`
+	Company  *string `json:"company"` // Visa, Mastercard, etc.
+	Color    *string `json:"color"`
 	UserID   uint    `json:"user_id"`
-	User     User    `json:"-"`
+	User     *User   `json:"-"`
 }
 
 type WalletDTO struct {
@@ -41,10 +41,17 @@ func (w *Wallet) ToDTO() WalletDTO {
 		Currency: w.Currency,
 		Balance:  w.Balance,
 		Type:     w.Type,
-		CardNo:   w.CardNo,
-		Expiry:   w.Expiry,
-		Bank:     w.Bank,
-		Company:  w.Company,
-		Color:    w.Color,
+		CardNo:   getString(w.CardNo),
+		Expiry:   getString(w.Expiry),
+		Bank:     getString(w.Bank),
+		Company:  getString(w.Company),
+		Color:    getString(w.Color),
 	}
+}
+
+func getString(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }

@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"errors"
+	"log"
 	"net/http"
 	"strconv"
 
@@ -16,6 +17,7 @@ import (
 func CreateWallet(c *gin.Context) {
 	var wallet models.Wallet
 	if err := c.ShouldBindJSON(&wallet); err != nil {
+		log.Printf("CreateWallet Binding Error: %v", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body", "details": err.Error()})
 		return
 	}

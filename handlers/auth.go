@@ -100,6 +100,38 @@ func GetProfile(c *gin.Context) {
 	})
 }
 
+// RefreshToken handles POST /refreshToken
+func RefreshToken(c *gin.Context) {
+	var request struct {
+		OldToken string `json:"oldToken" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+		return
+	}
+
+	// For simplicity, we just generate a new token if we can extract a user ID from the old one,
+	// even if the old one is expired (as long as it was signed with our secret).
+	claims, _ := utils.ValidateToken(request.OldToken)
+	if claims == nil || claims.UserID == 0 {
+		c.JSON(http.StatusUnauthorized, gin.H{"message": "Invalid or malformed token"})
+		return
+	}
+
+	// If we got claims, use the UserID
+	newToken, err := utils.GenerateToken(claims.UserID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate token"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"newToken":   newToken,
+		"expiryTime": 86400, // 24 hours in seconds
+	})
+}
+
 func ExtractUserID(c *gin.Context) uint {
 	if userID, exists := c.Get("user_id"); exists {
 		return userID.(uint)

@@ -18,6 +18,7 @@ func main() {
 
 	r.POST("/register", handlers.RegisterUser)
 	r.POST("/login", handlers.LoginUser)
+	r.POST("/refreshToken", handlers.RefreshToken)
 
 	authenticated := r.Group("/")
 	authenticated.Use(middleware.AuthMiddleware())

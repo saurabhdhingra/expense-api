@@ -8,7 +8,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
-const jwtSecret = "EXPENSE_TRACKER_SUPER_SECURE_JWT_KEY_2025" 
+const jwtSecret = "EXPENSE_TRACKER_SUPER_SECURE_JWT_KEY_2025"
 
 type Claims struct {
 	UserID uint `json:"user_id"`
@@ -42,11 +42,11 @@ func ValidateToken(tokenString string) (*Claims, error) {
 	})
 
 	if err != nil {
-		return nil, err
+		return claims, err
 	}
 
 	if !token.Valid {
-		return nil, errors.New("invalid token")
+		return claims, errors.New("invalid token")
 	}
 
 	return claims, nil

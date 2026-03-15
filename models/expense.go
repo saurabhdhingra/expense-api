@@ -7,13 +7,16 @@ import (
 )
 
 var ValidCategories = map[string]bool{
-	"Groceries":   true,
-	"Leisure":     true,
-	"Electronics": true,
-	"Utilities":   true,
-	"Clothing":    true,
-	"Health":      true,
-	"Others":      true,
+	"Groceries":     true,
+	"Leisure":       true,
+	"Electronics":   true,
+	"Utilities":     true,
+	"Clothing":      true,
+	"Health":        true,
+	"Rent":          true,
+	"Investment":    true,
+	"Miscellaneous": true,
+	"Others":        true,
 }
 
 type Expense struct {
@@ -23,9 +26,9 @@ type Expense struct {
 	Category    string    `json:"category" binding:"required"`
 	Date        time.Time `json:"date" binding:"required"`
 	UserID      uint      `json:"user_id"`
-	User        User      `json:"-"`
+	User        *User     `json:"-"`
 	WalletID    uint      `json:"wallet_id"`
-	Wallet      Wallet    `json:"-"`
+	Wallet      *Wallet   `json:"-"`
 }
 
 type ExpenseDTO struct {
@@ -34,6 +37,14 @@ type ExpenseDTO struct {
 	Amount      float64   `json:"amount"`
 	Category    string    `json:"category"`
 	Date        time.Time `json:"date"`
+	WalletID    string    `json:"wallet_id"`
+}
+
+type ExpenseCreateRequest struct {
+	Description string    `json:"description" binding:"required"`
+	Amount      float64   `json:"amount" binding:"required,gt=0"`
+	Category    string    `json:"category" binding:"required"`
+	Date        time.Time `json:"date" binding:"required"`
 	WalletID    string    `json:"wallet_id"`
 }
 
